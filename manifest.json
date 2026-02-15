@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "等时仪表盘-WaitDash",
+  "version": "1.1.0",
+  "description": "精准统计你与 AI 对话的等待耗时、使用时长，帮你看清时间都花在哪，效率肉眼可见。",
+  "icons": {
+  "16": "icons/icon16.png",
+  "48": "icons/icon48.png",
+  "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+    }
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://www.doubao.com/*",
+        "*://yuanbao.tencent.com/*",
+        "*://chat.openai.com/*",
+        "*://claude.ai/*",
+        "*://gemini.google.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html"
+}

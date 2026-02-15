@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WaitDash - 设置</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background-color: #f5f5f5;
+      margin: 0;
+      padding: 20px;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background-color: white;
+      border-radius: 8px;
+      padding: 24px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+      font-size: 24px;
+      margin: 0 0 24px 0;
+      color: #333;
+    }
+    .section {
+      margin-bottom: 24px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid #eee;
+    }
+    .section:last-child {
+      border-bottom: none;
+    }
+    h2 {
+      font-size: 18px;
+      margin: 0 0 16px 0;
+      color: #555;
+    }
+    .option-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding: 12px;
+      background-color: #f9f9f9;
+      border-radius: 6px;
+    }
+    .option-label {
+      font-weight: 500;
+      color: #333;
+    }
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 50px;
+      height: 24px;
+    }
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 24px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: #4CAF50;
+    }
+    input:focus + .slider {
+      box-shadow: 0 0 1px #4CAF50;
+    }
+    input:checked + .slider:before {
+      transform: translateX(26px);
+    }
+    .button {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-top: 16px;
+    }
+    .button:hover {
+      background-color: #45a049;
+    }
+    .button-secondary {
+      background-color: #666;
+      margin-right: 10px;
+    }
+    .button-secondary:hover {
+      background-color: #555;
+    }
+    .status-message {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .status-success {
+      background-color: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>WaitDash 设置</h1>
+    
+    <div class="section">
+      <h2>网站追踪设置</h2>
+      <div class="option-item">
+        <span class="option-label">豆包 (doubao.com)</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-doubao" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="option-item">
+        <span class="option-label">元宝 (yuanbao.tencent.com)</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-yuanbao" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="option-item">
+        <span class="option-label">ChatGPT (chat.openai.com)</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-chatgpt" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="option-item">
+        <span class="option-label">Claude (claude.ai)</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-claude" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="option-item">
+        <span class="option-label">Gemini (gemini.google.com)</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-gemini" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+    
+    <div class="section">
+      <h2>通用设置</h2>
+      <div class="option-item">
+        <span class="option-label">启用时间追踪</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-tracking" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="option-item">
+        <span class="option-label">启用详细日志</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-logs">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+    
+    <div class="section">
+      <h2>数据管理</h2>
+      <button class="button button-secondary" id="export-btn">导出数据</button>
+      <button class="button button-danger" id="clear-all-btn">清空所有数据</button>
+    </div>
+    
+    <div id="status-message" class="status-message" style="display: none;"></div>
+    
+    <div style="margin-top: 24px;">
+      <button class="button" id="save-btn">保存设置</button>
+    </div>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>
