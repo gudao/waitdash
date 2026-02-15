@@ -14,7 +14,7 @@ class TimeTracker {
     const url = window.location.href;
     if (url.includes('doubao.com')) return '豆包';
     if (url.includes('yuanbao.tencent.com')) return '元宝';
-    if (url.includes('chat.openai.com')) return 'ChatGPT';
+    if (url.includes('chatgpt.com')) return 'ChatGPT';
     if (url.includes('claude.ai')) return 'Claude';
     if (url.includes('gemini.google.com')) return 'Gemini';
     return 'Unknown';
@@ -26,8 +26,107 @@ class TimeTracker {
       this.startTime = Date.now();
       this.setupEventListeners();
       this.setupMutationObserver();
+      this.createFloatingButton();
       console.log(`${this.currentSite} 时间追踪已启动`);
     }
+  }
+
+  createFloatingButton() {
+    const button = document.createElement('div');
+    button.id = 'waitdash-floating-button';
+    button.style.cssText = `
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background-color: #4CAF50;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+      z-index: 9999;
+      font-size: 14px;
+      font-weight: bold;
+      transition: all 0.3s ease;
+    `;
+    
+    button.addEventListener('mouseenter', () => {
+      button.style.transform = 'scale(1.1)';
+    });
+    
+    button.addEventListener('mouseleave', () => {
+      button.style.transform = 'scale(1)';
+    });
+    
+    button.addEventListener('click', () => {
+      this.showUsageStats();
+    });
+    
+    this.updateButtonText(button);
+    setInterval(() => {
+      this.updateButtonText(button);
+    }, 60000);
+    
+    document.body.appendChild(button);
+  }
+
+  updateButtonText(button) {
+    const totalTimeMinutes = (this.totalTime / 1000 / 60).toFixed(0);
+    button.textContent = `${totalTimeMinutes}分`;
+  }
+
+  showUsageStats() {
+    const statsPanel = document.createElement('div');
+    statsPanel.id = 'waitdash-stats-panel';
+    statsPanel.style.cssText = `
+      position: fixed;
+      bottom: 90px;
+      right: 20px;
+      width: 300px;
+      background-color: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 20px rgba(0, 0, 0, 0.2);
+      z-index: 9999;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    `;
+    
+    const totalTimeMinutes = (this.totalTime / 1000 / 60).toFixed(2);
+    const waitTimeMinutes = (this.totalWaitTime / 1000 / 60).toFixed(2);
+    const waitPercentage = this.totalTime > 0 ? ((this.totalWaitTime / this.totalTime) * 100).toFixed(1) : '0';
+    
+    statsPanel.innerHTML = `
+      <div style="font-weight: bold; font-size: 16px; margin-bottom: 12px; color: #333;">${this.currentSite} 使用统计</div>
+      <div style="font-size: 14px; margin-bottom: 8px; color: #666;">总使用时间: <span style="font-weight: bold; color: #4CAF50;">${totalTimeMinutes} 分钟</span></div>
+      <div style="font-size: 14px; margin-bottom: 8px; color: #666;">等待时间: <span style="font-weight: bold; color: #f44336;">${waitTimeMinutes} 分钟</span></div>
+      <div style="font-size: 14px; margin-bottom: 16px; color: #666;">等待占比: ${waitPercentage}%</div>
+      <button id="waitdash-close-btn" style="
+        width: 100%;
+        padding: 8px;
+        background-color: #f1f1f1;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        color: #333;
+      ">关闭</button>
+    `;
+    
+    document.body.appendChild(statsPanel);
+    
+    document.getElementById('waitdash-close-btn').addEventListener('click', () => {
+      statsPanel.remove();
+    });
+    
+    setTimeout(() => {
+      if (document.getElementById('waitdash-stats-panel')) {
+        statsPanel.remove();
+      }
+    }, 10000);
   }
 
   setupEventListeners() {

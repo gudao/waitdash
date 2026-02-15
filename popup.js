@@ -3,33 +3,71 @@ document.addEventListener('DOMContentLoaded', () => {
   setupEventListeners();
 });
 
+let currentTabUrl = '';
+let allData = {};
+let expanded = false;
+
 function loadData() {
-  chrome.storage.local.get('aiUsageData', (result) => {
-    const usageData = result.aiUsageData || {};
-    const dataContainer = document.getElementById('data-container');
-    
-    if (Object.keys(usageData).length === 0) {
-      dataContainer.innerHTML = '<div class="empty-state">暂无数据，请先使用AI服务</div>';
-      return;
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) {
+      currentTabUrl = tabs[0].url;
     }
     
-    dataContainer.innerHTML = '';
-    
-    const totalStats = calculateTotalStats(usageData);
-    if (totalStats) {
-      const totalCard = createTotalStatsCard(totalStats);
-      dataContainer.appendChild(totalCard);
-    }
-    
-    Object.keys(usageData).forEach(site => {
-      const siteData = usageData[site];
-      if (siteData.length > 0) {
-        const latestData = siteData[siteData.length - 1];
-        const siteCard = createSiteCard(site, latestData);
-        dataContainer.appendChild(siteCard);
-      }
+    chrome.storage.local.get('aiUsageData', (result) => {
+      allData = result.aiUsageData || {};
+      displayData();
     });
   });
+}
+
+function displayData() {
+  const dataContainer = document.getElementById('data-container');
+  
+  if (Object.keys(allData).length === 0) {
+    dataContainer.innerHTML = '<div class="empty-state">暂无数据，请先使用AI服务</div>';
+    return;
+  }
+  
+  dataContainer.innerHTML = '';
+  
+  const currentSite = getCurrentSiteFromUrl(currentTabUrl);
+  
+  if (currentSite && allData[currentSite] && allData[currentSite].length > 0) {
+    const latestData = allData[currentSite][allData[currentSite].length - 1];
+    const siteCard = createSiteCard(currentSite, latestData, true);
+    dataContainer.appendChild(siteCard);
+  }
+  
+  const totalStats = calculateTotalStats(allData);
+  if (totalStats) {
+    const totalCard = createTotalStatsCard(totalStats);
+    dataContainer.appendChild(totalCard);
+  }
+  
+  if (!expanded && Object.keys(allData).length > 1) {
+    const expandButton = createExpandButton();
+    dataContainer.appendChild(expandButton);
+  } else if (expanded) {
+    Object.keys(allData).forEach(site => {
+      if (site !== currentSite) {
+        const siteData = allData[site];
+        if (siteData.length > 0) {
+          const latestData = siteData[siteData.length - 1];
+          const siteCard = createSiteCard(site, latestData, false);
+          dataContainer.appendChild(siteCard);
+        }
+      }
+    });
+  }
+}
+
+function getCurrentSiteFromUrl(url) {
+  if (url.includes('doubao.com')) return '豆包';
+  if (url.includes('yuanbao.tencent.com')) return '元宝';
+  if (url.includes('chat.openai.com')) return 'ChatGPT';
+  if (url.includes('claude.ai')) return 'Claude';
+  if (url.includes('gemini.google.com')) return 'Gemini';
+  return null;
 }
 
 function calculateTotalStats(usageData) {
@@ -77,9 +115,14 @@ function createTotalStatsCard(stats) {
   return card;
 }
 
-function createSiteCard(site, data) {
+function createSiteCard(site, data, isCurrent) {
   const card = document.createElement('div');
   card.className = 'site-card';
+  if (isCurrent) {
+    card.style.borderLeftColor = '#4CAF50';
+  } else {
+    card.style.borderLeftColor = '#9E9E9E';
+  }
   
   const totalTimeMinutes = (data.totalTime / 1000 / 60).toFixed(2);
   const waitTimeMinutes = (data.totalWaitTime / 1000 / 60).toFixed(2);
@@ -87,14 +130,27 @@ function createSiteCard(site, data) {
   const formattedDate = formatDate(data.date || new Date().toISOString().split('T')[0]);
   
   card.innerHTML = `
-    <div class="site-title">${site}</div>
+    <div class="site-title">
+      ${site} ${isCurrent ? '(当前)' : ''}
+    </div>
     <div class="time-info">总使用时间: <span class="total-time">${totalTimeMinutes} 分钟</span></div>
     <div class="time-info">等待时间: <span class="wait-time">${waitTimeMinutes} 分钟</span></div>
     <div class="time-info">等待占比: ${waitPercentage}%</div>
-    <div class="time-info" style="font-size: 10px; color: #999;">更新时间: ${formattedDate}</div>
+    <div class="time-info" style="font-size: 11px; color: #999;">更新时间: ${formattedDate}</div>
   `;
   
   return card;
+}
+
+function createExpandButton() {
+  const button = document.createElement('button');
+  button.className = 'button';
+  button.textContent = expanded ? '收起' : '查看全部数据';
+  button.addEventListener('click', () => {
+    expanded = !expanded;
+    displayData();
+  });
+  return button;
 }
 
 function setupEventListeners() {
