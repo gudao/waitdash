@@ -26,7 +26,7 @@
       "matches": [
         "*://www.doubao.com/*",
         "*://yuanbao.tencent.com/*",
-        "*://chat.openai.com/*",
+        "*://chatgpt.com/*",
         "*://claude.ai/*",
         "*://gemini.google.com/*"
       ],

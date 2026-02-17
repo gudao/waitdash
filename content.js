@@ -75,11 +75,18 @@ class TimeTracker {
   }
 
   updateButtonText(button) {
+    if (this.startTime) {
+      this.totalTime = Date.now() - this.startTime;
+    }
     const totalTimeMinutes = (this.totalTime / 1000 / 60).toFixed(0);
     button.textContent = `${totalTimeMinutes}分`;
   }
 
   showUsageStats() {
+    if (this.startTime) {
+      this.totalTime = Date.now() - this.startTime;
+    }
+    
     const statsPanel = document.createElement('div');
     statsPanel.id = 'waitdash-stats-panel';
     statsPanel.style.cssText = `
@@ -469,6 +476,10 @@ class TimeTracker {
 
   saveData() {
     if (!this.initialized || this.currentSite === 'Unknown') return;
+    
+    if (this.startTime) {
+      this.totalTime = Date.now() - this.startTime;
+    }
     
     const data = {
       site: this.currentSite,
