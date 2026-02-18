@@ -2,36 +2,140 @@ class TimeTracker {
   constructor() {
     this.startTime = null;
     this.waitStartTime = null;
-    this.totalTime = 0;
+    this.totalTime = 0; // kept for backward-compat display, computed from totalActiveTime
     this.totalWaitTime = 0;
     this.currentSite = this.detectSite();
     this.initialized = false;
     this.isWaiting = false;
     this.observer = null;
+    this.observers = []; // store all observers so we can disconnect
+    this.isActive = true;
+    this.lastActivityTime = Date.now();
+    this.inactivityTimer = null;
+    this.inactivityThreshold = 5 * 60 * 1000;
+
+    // new fields for correct segmented time accumulation
+    this.activeStart = null; // timestamp when current active segment started
+    this.totalActiveTime = 0; // accumulated active time in ms
+
+    // UI / listener handles
+    this.buttonInterval = null;
+    this.listenersAttached = false;
   }
 
   detectSite() {
-    const url = window.location.href;
-    if (url.includes('doubao.com')) return '豆包';
-    if (url.includes('yuanbao.tencent.com')) return '元宝';
-    if (url.includes('chatgpt.com')) return 'ChatGPT';
-    if (url.includes('claude.ai')) return 'Claude';
-    if (url.includes('gemini.google.com')) return 'Gemini';
+    const host = window.location.hostname.toLowerCase();
+    const url = window.location.href.toLowerCase();
+    if (host.includes('doubao.com') || url.includes('doubao.com')) return '豆包';
+    if (host.includes('yuanbao.tencent.com') || url.includes('yuanbao.tencent.com')) return '元宝';
+    if (host.includes('chat.openai.com') || host.includes('chatgpt.com') || url.includes('chat.openai.com')) return 'ChatGPT';
+    if (host.includes('claude.ai') || url.includes('claude.ai')) return 'Claude';
+    if (host.includes('gemini.google.com') || url.includes('gemini') || url.includes('gemini.google.com')) return 'Gemini';
     return 'Unknown';
   }
 
-  startTracking() {
+  async startTracking() {
     if (!this.initialized && this.currentSite !== 'Unknown') {
       this.initialized = true;
-      this.startTime = Date.now();
+      // load persisted data first
+      await this.loadData();
+
+      // start a new active segment
+      this.activeStart = Date.now();
+      this.lastActivityTime = Date.now();
+
       this.setupEventListeners();
       this.setupMutationObserver();
       this.createFloatingButton();
+      this.setupActivityListeners();
+      this.startInactivityTimer();
       console.log(`${this.currentSite} 时间追踪已启动`);
     }
   }
 
+  setupActivityListeners() {
+    if (this.listenersAttached) return;
+    this.listenersAttached = true;
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this.onPageInactive();
+      } else {
+        this.onPageActive();
+      }
+    });
+
+    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'click', 'touchstart'];
+    activityEvents.forEach(event => {
+      document.addEventListener(event, () => {
+        this.onUserActivity();
+      }, { passive: true });
+    });
+  }
+
+  onPageActive() {
+    if (!this.activeStart) {
+      this.activeStart = Date.now();
+    }
+    this.isActive = true;
+    this.lastActivityTime = Date.now();
+    this.startInactivityTimer();
+    console.log(`${this.currentSite} 页面已激活，继续计时`);
+  }
+
+  onPageInactive() {
+    // accumulate the active segment
+    if (this.activeStart) {
+      this.totalActiveTime += Date.now() - this.activeStart;
+      this.activeStart = null;
+    }
+    this.isActive = false;
+    this.resetInactivityTimer();
+    console.log(`${this.currentSite} 页面已暂停，停止计时`);
+    this.saveData();
+  }
+
+  onUserActivity() {
+    this.isActive = true;
+    this.lastActivityTime = Date.now();
+    this.resetInactivityTimer();
+    this.startInactivityTimer();
+    if (!this.activeStart) this.activeStart = Date.now();
+  }
+
+  startInactivityTimer() {
+    this.resetInactivityTimer();
+    this.inactivityTimer = setTimeout(() => {
+      this.onInactivityTimeout();
+    }, this.inactivityThreshold);
+  }
+
+  resetInactivityTimer() {
+    if (this.inactivityTimer) {
+      clearTimeout(this.inactivityTimer);
+      this.inactivityTimer = null;
+    }
+  }
+
+  onInactivityTimeout() {
+    if (this.isActive) {
+      const timeSinceLastActivity = Date.now() - this.lastActivityTime;
+      if (timeSinceLastActivity >= this.inactivityThreshold) {
+        // treat as inactive: accumulate active segment
+        if (this.activeStart) {
+          this.totalActiveTime += Date.now() - this.activeStart;
+          this.activeStart = null;
+        }
+        this.isActive = false;
+        console.log(`${this.currentSite} 超过${this.inactivityThreshold/60000}分钟无活动，停止计时`);
+        this.saveData();
+      }
+    }
+  }
+
   createFloatingButton() {
+    if (document.getElementById('waitdash-floating-button')) return;
+
     const button = document.createElement('div');
     button.id = 'waitdash-floating-button';
     button.style.cssText = `
@@ -53,40 +157,44 @@ class TimeTracker {
       font-weight: bold;
       transition: all 0.3s ease;
     `;
-    
+
     button.addEventListener('mouseenter', () => {
       button.style.transform = 'scale(1.1)';
     });
-    
+
     button.addEventListener('mouseleave', () => {
       button.style.transform = 'scale(1)';
     });
-    
+
     button.addEventListener('click', () => {
       this.showUsageStats();
     });
-    
+
     this.updateButtonText(button);
-    setInterval(() => {
+    this.buttonInterval = setInterval(() => {
       this.updateButtonText(button);
     }, 60000);
-    
+
     document.body.appendChild(button);
   }
 
   updateButtonText(button) {
-    if (this.startTime) {
-      this.totalTime = Date.now() - this.startTime;
+    const now = Date.now();
+    const totalActive = this.computeTotalActive(now);
+    this.totalTime = totalActive; // keep for backward compatibility
+    if (totalActive > 0) {
+      const totalTimeMinutes = (totalActive / 1000 / 60).toFixed(0);
+      button.textContent = `${totalTimeMinutes}分`;
+    } else {
+      button.textContent = '0分';
     }
-    const totalTimeMinutes = (this.totalTime / 1000 / 60).toFixed(0);
-    button.textContent = `${totalTimeMinutes}分`;
   }
 
   showUsageStats() {
-    if (this.startTime) {
-      this.totalTime = Date.now() - this.startTime;
-    }
-    
+    const now = Date.now();
+    const totalActive = this.computeTotalActive(now);
+    this.totalTime = totalActive; // sync
+
     const statsPanel = document.createElement('div');
     statsPanel.id = 'waitdash-stats-panel';
     statsPanel.style.cssText = `
@@ -101,13 +209,16 @@ class TimeTracker {
       padding: 16px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     `;
-    
-    const totalTimeMinutes = (this.totalTime / 1000 / 60).toFixed(2);
+
+    const totalTimeMinutes = (totalActive / 1000 / 60).toFixed(2);
     const waitTimeMinutes = (this.totalWaitTime / 1000 / 60).toFixed(2);
-    const waitPercentage = this.totalTime > 0 ? ((this.totalWaitTime / this.totalTime) * 100).toFixed(1) : '0';
-    
+    const waitPercentage = totalActive > 0 ? ((this.totalWaitTime / totalActive) * 100).toFixed(1) : '0';
+    const statusText = this.isActive ? '运行中' : '已暂停';
+    const statusColor = this.isActive ? '#4CAF50' : '#9E9E9E';
+
     statsPanel.innerHTML = `
       <div style="font-weight: bold; font-size: 16px; margin-bottom: 12px; color: #333;">${this.currentSite} 使用统计</div>
+      <div style="font-size: 14px; margin-bottom: 8px; color: #666;">状态: <span style="font-weight: bold; color: ${statusColor};">${statusText}</span></div>
       <div style="font-size: 14px; margin-bottom: 8px; color: #666;">总使用时间: <span style="font-weight: bold; color: #4CAF50;">${totalTimeMinutes} 分钟</span></div>
       <div style="font-size: 14px; margin-bottom: 8px; color: #666;">等待时间: <span style="font-weight: bold; color: #f44336;">${waitTimeMinutes} 分钟</span></div>
       <div style="font-size: 14px; margin-bottom: 16px; color: #666;">等待占比: ${waitPercentage}%</div>
@@ -122,18 +233,19 @@ class TimeTracker {
         color: #333;
       ">关闭</button>
     `;
-    
+
     document.body.appendChild(statsPanel);
-    
+
     document.getElementById('waitdash-close-btn').addEventListener('click', () => {
       statsPanel.remove();
     });
-    
+
+    // remove after 30s by default
     setTimeout(() => {
       if (document.getElementById('waitdash-stats-panel')) {
         statsPanel.remove();
       }
-    }, 10000);
+    }, 30000);
   }
 
   setupEventListeners() {
@@ -142,6 +254,10 @@ class TimeTracker {
   }
 
   setupInputListeners() {
+    // prevent duplicate listeners
+    if (this._inputListenersInitialized) return;
+    this._inputListenersInitialized = true;
+
     document.addEventListener('keydown', (e) => {
       if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Submit') {
         this.startWaitTime();
@@ -155,7 +271,7 @@ class TimeTracker {
             if (node.tagName === 'BUTTON') {
               this.checkAndAddSendButtonListener(node);
             }
-            node.querySelectorAll('button').forEach(button => {
+            node.querySelectorAll && node.querySelectorAll('button').forEach(button => {
               this.checkAndAddSendButtonListener(button);
             });
           }
@@ -167,14 +283,20 @@ class TimeTracker {
       childList: true,
       subtree: true
     });
+
+    this.observers.push(observer);
   }
 
   checkAndAddSendButtonListener(button) {
-    const buttonText = button.textContent.toLowerCase();
-    if (buttonText.includes('发送') || buttonText.includes('submit') || buttonText.includes('send') || buttonText.includes('ask') || buttonText.includes('提问')) {
-      button.addEventListener('click', () => {
-        this.startWaitTime();
-      });
+    try {
+      const buttonText = (button.textContent || '').toLowerCase();
+      if (buttonText.includes('发送') || buttonText.includes('submit') || buttonText.includes('send') || buttonText.includes('ask') || buttonText.includes('提问')) {
+        button.addEventListener('click', () => {
+          this.startWaitTime();
+        });
+      }
+    } catch (e) {
+      // ignore
     }
   }
 
@@ -200,21 +322,17 @@ class TimeTracker {
 
   setupDoubaoListeners() {
     console.log('设置豆包监听器');
-    
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
           if (node.nodeType === Node.ELEMENT_NODE) {
-            const sendButtons = node.querySelectorAll('button');
-            sendButtons.forEach(button => {
-              const buttonText = button.textContent.toLowerCase();
+            node.querySelectorAll && node.querySelectorAll('button').forEach(button => {
+              const buttonText = (button.textContent || '').toLowerCase();
               if (buttonText.includes('发送') || buttonText.includes('提问') || buttonText.includes('ask')) {
-                button.addEventListener('click', () => {
-                  this.startWaitTime();
-                });
+                button.addEventListener('click', () => { this.startWaitTime(); });
               }
             });
-            
+
             if (node.classList && (node.classList.contains('message') || node.classList.contains('response') || node.classList.contains('answer') || node.classList.contains('result') || node.classList.contains('chat-message'))) {
               if (node.textContent && node.textContent.length > 50) {
                 this.endWaitTime();
@@ -224,12 +342,10 @@ class TimeTracker {
         });
       });
     });
-    
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-    
+
+    observer.observe(document.body, { childList: true, subtree: true });
+    this.observers.push(observer);
+
     document.addEventListener('keydown', (e) => {
       if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Submit') {
         const activeElement = document.activeElement;
@@ -242,21 +358,17 @@ class TimeTracker {
 
   setupYuanbaoListeners() {
     console.log('设置元宝监听器');
-    
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
           if (node.nodeType === Node.ELEMENT_NODE) {
-            const sendButtons = node.querySelectorAll('button');
-            sendButtons.forEach(button => {
-              const buttonText = button.textContent.toLowerCase();
+            node.querySelectorAll && node.querySelectorAll('button').forEach(button => {
+              const buttonText = (button.textContent || '').toLowerCase();
               if (buttonText.includes('发送') || buttonText.includes('提问') || buttonText.includes('ask') || buttonText.includes('send')) {
-                button.addEventListener('click', () => {
-                  this.startWaitTime();
-                });
+                button.addEventListener('click', () => { this.startWaitTime(); });
               }
             });
-            
+
             if (node.classList && (node.classList.contains('message') || node.classList.contains('response') || node.classList.contains('answer') || node.classList.contains('result') || node.classList.contains('yuanbao-message'))) {
               if (node.textContent && node.textContent.length > 50) {
                 this.endWaitTime();
@@ -266,12 +378,10 @@ class TimeTracker {
         });
       });
     });
-    
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-    
+
+    observer.observe(document.body, { childList: true, subtree: true });
+    this.observers.push(observer);
+
     document.addEventListener('keydown', (e) => {
       if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Submit') {
         const activeElement = document.activeElement;
@@ -284,22 +394,18 @@ class TimeTracker {
 
   setupChatGPTListeners() {
     console.log('设置ChatGPT监听器');
-    
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
           if (node.nodeType === Node.ELEMENT_NODE) {
-            const sendButtons = node.querySelectorAll('button');
-            sendButtons.forEach(button => {
-              const buttonText = button.textContent.toLowerCase();
-              const buttonClass = button.className;
+            node.querySelectorAll && node.querySelectorAll('button').forEach(button => {
+              const buttonText = (button.textContent || '').toLowerCase();
+              const buttonClass = (button.className || '').toLowerCase();
               if (buttonText.includes('send') || buttonText.includes('submit') || buttonText.includes('ask') || buttonClass.includes('send') || buttonClass.includes('submit')) {
-                button.addEventListener('click', () => {
-                  this.startWaitTime();
-                });
+                button.addEventListener('click', () => { this.startWaitTime(); });
               }
             });
-            
+
             if (node.classList && (node.classList.contains('message') || node.classList.contains('response') || node.classList.contains('answer') || node.classList.contains('result') || node.classList.contains('chatgpt-message') || node.classList.contains('assistant-message'))) {
               if (node.textContent && node.textContent.length > 50) {
                 this.endWaitTime();
@@ -309,12 +415,10 @@ class TimeTracker {
         });
       });
     });
-    
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-    
+
+    observer.observe(document.body, { childList: true, subtree: true });
+    this.observers.push(observer);
+
     document.addEventListener('keydown', (e) => {
       if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Submit') {
         const activeElement = document.activeElement;
@@ -327,22 +431,18 @@ class TimeTracker {
 
   setupClaudeListeners() {
     console.log('设置Claude监听器');
-    
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
           if (node.nodeType === Node.ELEMENT_NODE) {
-            const sendButtons = node.querySelectorAll('button');
-            sendButtons.forEach(button => {
-              const buttonText = button.textContent.toLowerCase();
-              const buttonClass = button.className;
+            node.querySelectorAll && node.querySelectorAll('button').forEach(button => {
+              const buttonText = (button.textContent || '').toLowerCase();
+              const buttonClass = (button.className || '').toLowerCase();
               if (buttonText.includes('send') || buttonText.includes('submit') || buttonText.includes('ask') || buttonClass.includes('send') || buttonClass.includes('submit')) {
-                button.addEventListener('click', () => {
-                  this.startWaitTime();
-                });
+                button.addEventListener('click', () => { this.startWaitTime(); });
               }
             });
-            
+
             if (node.classList && (node.classList.contains('message') || node.classList.contains('response') || node.classList.contains('answer') || node.classList.contains('result') || node.classList.contains('claude-message') || node.classList.contains('assistant-message'))) {
               if (node.textContent && node.textContent.length > 50) {
                 this.endWaitTime();
@@ -352,12 +452,10 @@ class TimeTracker {
         });
       });
     });
-    
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-    
+
+    observer.observe(document.body, { childList: true, subtree: true });
+    this.observers.push(observer);
+
     document.addEventListener('keydown', (e) => {
       if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Submit') {
         const activeElement = document.activeElement;
@@ -370,22 +468,18 @@ class TimeTracker {
 
   setupGeminiListeners() {
     console.log('设置Gemini监听器');
-    
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
           if (node.nodeType === Node.ELEMENT_NODE) {
-            const sendButtons = node.querySelectorAll('button');
-            sendButtons.forEach(button => {
-              const buttonText = button.textContent.toLowerCase();
-              const buttonClass = button.className;
+            node.querySelectorAll && node.querySelectorAll('button').forEach(button => {
+              const buttonText = (button.textContent || '').toLowerCase();
+              const buttonClass = (button.className || '').toLowerCase();
               if (buttonText.includes('send') || buttonText.includes('submit') || buttonText.includes('ask') || buttonText.includes('发送') || buttonClass.includes('send') || buttonClass.includes('submit')) {
-                button.addEventListener('click', () => {
-                  this.startWaitTime();
-                });
+                button.addEventListener('click', () => { this.startWaitTime(); });
               }
             });
-            
+
             if (node.classList && (node.classList.contains('message') || node.classList.contains('response') || node.classList.contains('answer') || node.classList.contains('result') || node.classList.contains('gemini-message') || node.classList.contains('model-response'))) {
               if (node.textContent && node.textContent.length > 50) {
                 this.endWaitTime();
@@ -395,12 +489,10 @@ class TimeTracker {
         });
       });
     });
-    
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-    
+
+    observer.observe(document.body, { childList: true, subtree: true });
+    this.observers.push(observer);
+
     document.addEventListener('keydown', (e) => {
       if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Submit') {
         const activeElement = document.activeElement;
@@ -412,9 +504,10 @@ class TimeTracker {
   }
 
   setupMutationObserver() {
+    // main observer to detect generated responses across sites
+    if (this.observer) return;
     this.observer = new MutationObserver((mutations) => {
       let hasSignificantChange = false;
-      
       mutations.forEach((mutation) => {
         if (mutation.addedNodes.length > 0) {
           mutation.addedNodes.forEach((node) => {
@@ -429,16 +522,11 @@ class TimeTracker {
           });
         }
       });
-      
-      if (hasSignificantChange) {
-        this.endWaitTime();
-      }
+      if (hasSignificantChange) this.endWaitTime();
     });
 
-    this.observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
+    this.observer.observe(document.body, { childList: true, subtree: true });
+    this.observers.push(this.observer);
   }
 
   startWaitTime() {
@@ -463,53 +551,90 @@ class TimeTracker {
   }
 
   stopTracking() {
-    if (this.startTime) {
-      this.totalTime = Date.now() - this.startTime;
-      this.endWaitTime();
-      this.saveData();
-      if (this.observer) {
-        this.observer.disconnect();
+    // accumulate any running active segment
+    if (this.activeStart) {
+      this.totalActiveTime += Date.now() - this.activeStart;
+      this.activeStart = null;
+    }
+
+    // sync totalTime for compatibility
+    this.totalTime = this.totalActiveTime;
+
+    this.endWaitTime();
+    this.saveData();
+
+    // disconnect observers
+    try {
+      (this.observers || []).forEach(o => { try { o.disconnect(); } catch (e) {} });
+      this.observers = [];
+    } catch (e) {}
+
+    // clear ui interval
+    if (this.buttonInterval) {
+      clearInterval(this.buttonInterval);
+      this.buttonInterval = null;
+    }
+
+    console.log(`${this.currentSite} 时间追踪已停止`);
+  }
+
+  // helper to compute total active time including current segment
+  computeTotalActive(now = Date.now()) {
+    return this.totalActiveTime + (this.activeStart ? (now - this.activeStart) : 0);
+  }
+
+  async loadData() {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      try {
+        const data = await new Promise((resolve) => chrome.storage.local.get(['waitdash_stats'], resolve));
+        const all = data && data.waitdash_stats ? data.waitdash_stats : {};
+        const siteData = all[this.currentSite];
+        if (siteData) {
+          // load totals (assume stored in ms)
+          this.totalActiveTime = siteData.totalActiveTime || 0;
+          this.totalWaitTime = siteData.totalWaitTime || 0;
+        }
+      } catch (e) {
+        // ignore load errors
       }
-      console.log(`${this.currentSite} 时间追踪已停止`);
     }
   }
 
-  saveData() {
+  async saveData() {
     if (!this.initialized || this.currentSite === 'Unknown') return;
-    
-    if (this.startTime) {
-      this.totalTime = Date.now() - this.startTime;
-    }
-    
-    const data = {
+
+    // compute totals
+    const now = Date.now();
+    const totalActive = this.computeTotalActive(now);
+    this.totalTime = totalActive; // keep legacy field
+
+    const payload = {
       site: this.currentSite,
-      totalTime: this.totalTime,
+      totalActiveTime: totalActive,
       totalWaitTime: this.totalWaitTime,
-      waitPercentage: this.totalTime > 0 ? (this.totalWaitTime / this.totalTime) * 100 : 0,
-      timestamp: Date.now(),
-      date: new Date().toISOString().split('T')[0]
+      waitPercentage: totalActive > 0 ? (this.totalWaitTime / totalActive) * 100 : 0,
+      timestamp: now,
+      date: new Date(now).toISOString().split('T')[0]
     };
 
-    chrome.storage.local.get('aiUsageData', (result) => {
-      try {
-        const usageData = result.aiUsageData || {};
-        if (!usageData[this.currentSite]) {
-          usageData[this.currentSite] = [];
-        }
-        
-        usageData[this.currentSite].push(data);
-        
-        if (usageData[this.currentSite].length > 100) {
-          usageData[this.currentSite] = usageData[this.currentSite].slice(-100);
-        }
-        
-        chrome.storage.local.set({ aiUsageData: usageData }, () => {
-          console.log('数据已保存');
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ action: 'saveData', site: this.currentSite, data: payload }, (response) => {
+          if (chrome.runtime && chrome.runtime.lastError) {
+            const error = chrome.runtime.lastError;
+            if (error.message && error.message.includes('Extension context invalidated')) {
+              console.log('插件上下文已失效，跳过数据保存');
+            } else {
+              console.log('保存数据失败:', error);
+            }
+          } else if (response && response.success) {
+            console.log('数据已通过消息发送到后台');
+          }
         });
-      } catch (error) {
-        console.error('保存数据失败:', error);
       }
-    });
+    } catch (error) {
+      // ignore
+    }
   }
 }
 

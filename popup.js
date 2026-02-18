@@ -1,20 +1,113 @@
 document.addEventListener('DOMContentLoaded', () => {
+  injectPopupStyles();
   loadData();
   setupEventListeners();
 });
 
+// 注入样式，避免修改 popup.html
+function injectPopupStyles() {
+  if (document.getElementById('waitdash-popup-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'waitdash-popup-styles';
+  style.textContent = `
+    :root{ --bg:#f7f9fc; --card:#fff; --muted:#7a7f85; --accent:#4caf50; --accent-2:#2196f3; --danger:#f44336; }
+    html,body{ height:100%; }
+    body{ margin:0; font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:var(--bg); color:#222; min-width:380px; }
+    #data-container{ padding:12px; max-height:460px; overflow:auto; box-sizing:border-box; }
+    .site-card{ background:var(--card); border-radius:10px; padding:12px; margin-bottom:10px; box-shadow: 0 1px 6px rgba(16,24,40,0.06); display:flex; flex-direction:column; border-left:6px solid #e0e0e0; }
+    .site-row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+    .site-title{ font-weight:600; font-size:14px; color:#111; }
+    .site-meta{ font-size:12px; color:var(--muted); }
+    .time-info{ font-size:13px; color:#333; }
+    .small{ font-size:12px; color:var(--muted); }
+    .progress{ height:8px; background:#eee; border-radius:6px; overflow:hidden; margin-top:8px; }
+    .progress > i{ display:block; height:100%; background:linear-gradient(90deg,var(--accent),#7bd389); }
+    .stat-grid{ display:flex; gap:8px; }
+    .stat-item{ flex:1; background:linear-gradient(180deg,rgba(0,0,0,0.02),transparent); padding:8px; border-radius:6px; text-align:center; }
+    .stat-value{ font-weight:700; font-size:14px; }
+    .button{ background:var(--accent-2); border:none; color:#fff; padding:8px 10px; border-radius:8px; cursor:pointer; font-weight:600; }
+    .empty-state{ text-align:center; color:var(--muted); padding:28px 12px; }
+    /* controls container placed outside scrollable area */
+    #waitdash-controls{ padding:8px 12px; display:flex; justify-content:flex-end; gap:8px; }
+    .clear-small{ display:inline-block; background:transparent; color:var(--accent-2); border:1px solid rgba(33,150,243,0.12); padding:6px 8px; border-radius:6px; cursor:pointer; font-weight:600; font-size:12px; }
+  `;
+  document.head.appendChild(style);
+
+  // ensure there's a single controls container (no title)
+  if (!document.getElementById('waitdash-controls')) {
+    const controls = document.createElement('div');
+    controls.id = 'waitdash-controls';
+
+    // create clear button and place controls after data-container (to avoid affecting scrolling)
+    const clearBtn = document.createElement('button');
+    clearBtn.id = 'clear-btn';
+    clearBtn.className = 'clear-small';
+    clearBtn.textContent = '清空数据';
+    controls.appendChild(clearBtn);
+
+    const dataContainer = document.getElementById('data-container');
+    if (dataContainer && dataContainer.parentNode) {
+      dataContainer.parentNode.insertBefore(controls, dataContainer.nextSibling);
+    } else {
+      document.body.insertBefore(controls, document.body.firstChild);
+    }
+  }
+}
+
 let currentTabUrl = '';
 let allData = {};
-let expanded = false;
 
 function loadData() {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (tabs[0]) {
       currentTabUrl = tabs[0].url;
     }
-    
-    chrome.storage.local.get('aiUsageData', (result) => {
-      allData = result.aiUsageData || {};
+
+    // 兼容读取两种存储格式：老的 aiUsageData（site -> array）以及新的 waitdash_stats（site -> object）
+    chrome.storage.local.get(['aiUsageData', 'waitdash_stats'], (result) => {
+      const rawAi = result.aiUsageData || {};
+      const rawWait = result.waitdash_stats || {};
+      const normalized = {};
+
+      // 从 waitdash_stats 归一化：site -> object 转为数组项
+      Object.keys(rawWait).forEach(site => {
+        const s = rawWait[site] || {};
+        normalized[site] = normalized[site] || [];
+        normalized[site].push({
+          totalTime: Number(s.totalActiveTime || 0),
+          totalWaitTime: Number(s.totalWaitTime || 0),
+          waitPercentage: Number(s.totalActiveTime) > 0 ? (Number(s.totalWaitTime || 0) / Number(s.totalActiveTime || 0)) * 100 : 0,
+          date: s.date || new Date().toISOString().split('T')[0],
+          timestamp: s.lastSaved || Date.now()
+        });
+      });
+
+      // 从 aiUsageData 归一化：支持 site -> array 或 site -> object
+      Object.keys(rawAi).forEach(site => {
+        const arr = rawAi[site];
+        normalized[site] = normalized[site] || [];
+        if (Array.isArray(arr)) {
+          arr.forEach(entry => {
+            normalized[site].push({
+              totalTime: Number(entry.totalTime || entry.totalActiveTime || 0),
+              totalWaitTime: Number(entry.totalWaitTime || 0),
+              waitPercentage: typeof entry.waitPercentage !== 'undefined' ? Number(entry.waitPercentage) : (Number(entry.totalTime || entry.totalActiveTime || 0) > 0 ? (Number(entry.totalWaitTime || 0) / Number(entry.totalTime || entry.totalActiveTime || 0)) * 100 : 0),
+              date: entry.date || new Date().toISOString().split('T')[0],
+              timestamp: entry.timestamp || Date.now()
+            });
+          });
+        } else if (arr && typeof arr === 'object') {
+          normalized[site].push({
+            totalTime: Number(arr.totalTime || arr.totalActiveTime || 0),
+            totalWaitTime: Number(arr.totalWaitTime || 0),
+            waitPercentage: typeof arr.waitPercentage !== 'undefined' ? Number(arr.waitPercentage) : (Number(arr.totalTime || arr.totalActiveTime || 0) > 0 ? (Number(arr.totalWaitTime || 0) / Number(arr.totalTime || arr.totalActiveTime || 0)) * 100 : 0),
+            date: arr.date || new Date().toISOString().split('T')[0],
+            timestamp: arr.timestamp || Date.now()
+          });
+        }
+      });
+
+      allData = normalized;
       displayData();
     });
   });
@@ -32,6 +125,7 @@ function displayData() {
   
   const currentSite = getCurrentSiteFromUrl(currentTabUrl);
   
+  // always show current site (if any) and total summary
   if (currentSite && allData[currentSite] && allData[currentSite].length > 0) {
     const latestData = allData[currentSite][allData[currentSite].length - 1];
     const siteCard = createSiteCard(currentSite, latestData, true);
@@ -43,28 +137,12 @@ function displayData() {
     const totalCard = createTotalStatsCard(totalStats);
     dataContainer.appendChild(totalCard);
   }
-  
-  if (!expanded && Object.keys(allData).length > 1) {
-    const expandButton = createExpandButton();
-    dataContainer.appendChild(expandButton);
-  } else if (expanded) {
-    Object.keys(allData).forEach(site => {
-      if (site !== currentSite) {
-        const siteData = allData[site];
-        if (siteData.length > 0) {
-          const latestData = siteData[siteData.length - 1];
-          const siteCard = createSiteCard(site, latestData, false);
-          dataContainer.appendChild(siteCard);
-        }
-      }
-    });
-  }
 }
 
 function getCurrentSiteFromUrl(url) {
   if (url.includes('doubao.com')) return '豆包';
   if (url.includes('yuanbao.tencent.com')) return '元宝';
-  if (url.includes('chat.openai.com')) return 'ChatGPT';
+  if (url.includes('chatgpt.com')) return 'ChatGPT';
   if (url.includes('claude.ai')) return 'Claude';
   if (url.includes('gemini.google.com')) return 'Gemini';
   return null;
@@ -96,70 +174,90 @@ function calculateTotalStats(usageData) {
 }
 
 function createTotalStatsCard(stats) {
+  // ensure numeric
+  const total = Number(stats.totalTime || 0);
+  const wait = Number(stats.totalWaitTime || 0);
+  const pct = Number(stats.waitPercentage || 0);
+
   const card = document.createElement('div');
   card.className = 'site-card';
-  card.style.borderLeftColor = '#2196F3';
-  
-  const totalTimeMinutes = (stats.totalTime / 1000 / 60).toFixed(2);
-  const waitTimeMinutes = (stats.totalWaitTime / 1000 / 60).toFixed(2);
-  const waitPercentage = stats.waitPercentage.toFixed(1);
-  
+  card.style.borderLeftColor = 'var(--accent-2)';
+
+  const totalTimeMinutes = (total / 1000 / 60).toFixed(2);
+  const waitTimeMinutes = (wait / 1000 / 60).toFixed(2);
+  const waitPercentage = pct.toFixed(1);
+  const avgWait = (pct / (stats.siteCount || 1)).toFixed(1);
+
   card.innerHTML = `
-    <div class="site-title">总计 (${stats.siteCount} 个网站)</div>
-    <div class="time-info">总使用时间: <span class="total-time">${totalTimeMinutes} 分钟</span></div>
-    <div class="time-info">等待时间: <span class="wait-time">${waitTimeMinutes} 分钟</span></div>
-    <div class="time-info">等待占比: ${waitPercentage}%</div>
-    <div class="time-info">平均等待占比: ${(stats.waitPercentage / stats.siteCount).toFixed(1)}%</div>
+    <div class="site-row">
+      <div>
+        <div class="site-title">总计 <span class="small">(${stats.siteCount} 个网站)</span></div>
+        <div class="site-meta">汇总最近数据</div>
+      </div>
+      <div class="stat-grid" style="min-width:150px;">
+        <div class="stat-item"><div class="small">总时长</div><div class="stat-value">${totalTimeMinutes} 分</div></div>
+        <div class="stat-item"><div class="small">等待</div><div class="stat-value" style="color:var(--danger);">${waitTimeMinutes} 分</div></div>
+      </div>
+    </div>
+    <div style="margin-top:8px; display:flex; align-items:center; justify-content:space-between;">
+      <div class="small">等待占比</div>
+      <div style="font-weight:700;">${waitPercentage}%</div>
+    </div>
+    <div class="progress"><i style="width:${Math.min(100, Math.max(0, pct))}%"></i></div>
+    <div style="margin-top:8px; text-align:right; font-size:12px; color:var(--muted);">平均等待占比: ${avgWait}%</div>
   `;
-  
+
   return card;
 }
 
 function createSiteCard(site, data, isCurrent) {
+  // normalize numeric values
+  const t = Number(data.totalTime || data.totalActiveTime || 0);
+  const w = Number(data.totalWaitTime || 0);
+  const pct = typeof data.waitPercentage !== 'undefined' ? Number(data.waitPercentage) : (t > 0 ? (w / t) * 100 : 0);
+  const totalTimeMinutes = (t / 1000 / 60).toFixed(2);
+  const waitTimeMinutes = (w / 1000 / 60).toFixed(2);
+  const waitPercentage = pct.toFixed(1);
+  const formattedDate = formatDate(data.date || new Date().toISOString().split('T')[0]);
+
   const card = document.createElement('div');
   card.className = 'site-card';
-  if (isCurrent) {
-    card.style.borderLeftColor = '#4CAF50';
-  } else {
-    card.style.borderLeftColor = '#9E9E9E';
-  }
-  
-  const totalTimeMinutes = (data.totalTime / 1000 / 60).toFixed(2);
-  const waitTimeMinutes = (data.totalWaitTime / 1000 / 60).toFixed(2);
-  const waitPercentage = data.waitPercentage || (data.totalTime > 0 ? ((data.totalWaitTime / data.totalTime) * 100).toFixed(1) : '0');
-  const formattedDate = formatDate(data.date || new Date().toISOString().split('T')[0]);
-  
+  card.style.borderLeftColor = isCurrent ? 'var(--accent)' : '#9E9E9E';
+
   card.innerHTML = `
-    <div class="site-title">
-      ${site} ${isCurrent ? '(当前)' : ''}
+    <div class="site-row">
+      <div>
+        <div class="site-title">${site} ${isCurrent ? '<span class="small">(当前)</span>' : ''}</div>
+        <div class="site-meta">更新时间: ${formattedDate}</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-weight:700; font-size:14px;">${totalTimeMinutes} 分钟</div>
+        <div class="small">等待 ${waitTimeMinutes} 分钟</div>
+      </div>
     </div>
-    <div class="time-info">总使用时间: <span class="total-time">${totalTimeMinutes} 分钟</span></div>
-    <div class="time-info">等待时间: <span class="wait-time">${waitTimeMinutes} 分钟</span></div>
-    <div class="time-info">等待占比: ${waitPercentage}%</div>
-    <div class="time-info" style="font-size: 11px; color: #999;">更新时间: ${formattedDate}</div>
+    <div style="margin-top:6px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div class="small">等待占比</div>
+        <div style="font-weight:700;">${waitPercentage}%</div>
+      </div>
+      <div class="progress"><i style="width:${Math.min(100, Math.max(0, pct))}%"></i></div>
+    </div>
   `;
-  
+
   return card;
 }
 
-function createExpandButton() {
-  const button = document.createElement('button');
-  button.className = 'button';
-  button.textContent = expanded ? '收起' : '查看全部数据';
-  button.addEventListener('click', () => {
-    expanded = !expanded;
-    displayData();
-  });
-  return button;
-}
-
 function setupEventListeners() {
-  document.getElementById('clear-btn').addEventListener('click', () => {
-    if (confirm('确定要清空所有数据吗？此操作不可恢复。')) {
-      chrome.storage.local.set({ aiUsageData: {} }, () => {
-        loadData();
-        alert('数据已清空');
-      });
+  // clear button listener
+  document.addEventListener('click', (e) => {
+    const target = e.target;
+    if (target && target.id === 'clear-btn') {
+      if (confirm('确定要清空所有数据吗？此操作不可恢复。')) {
+        chrome.storage.local.set({ aiUsageData: {}, waitdash_stats: {} }, () => {
+          loadData();
+          alert('数据已清空');
+        });
+      }
     }
   });
 }

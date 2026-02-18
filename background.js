@@ -13,17 +13,33 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'saveData') {
     chrome.storage.local.get('aiUsageData', (result) => {
-      const usageData = result.aiUsageData || {};
-      const { site, data } = message;
-      
-      if (!usageData[site]) {
-        usageData[site] = [];
+      try {
+        const usageData = result.aiUsageData || {};
+        const { site, data } = message;
+        
+        if (!usageData[site]) {
+          usageData[site] = [];
+        }
+        
+        usageData[site].push(data);
+        
+        if (usageData[site].length > 100) {
+          usageData[site] = usageData[site].slice(-100);
+        }
+        
+        chrome.storage.local.set({ aiUsageData: usageData }, () => {
+          if (chrome.runtime.lastError) {
+            console.error('保存数据失败:', chrome.runtime.lastError);
+            sendResponse({ success: false, error: chrome.runtime.lastError });
+          } else {
+            console.log('数据已保存');
+            sendResponse({ success: true });
+          }
+        });
+      } catch (error) {
+        console.error('保存数据失败:', error);
+        sendResponse({ success: false, error: error.message });
       }
-      usageData[site].push(data);
-      
-      chrome.storage.local.set({ aiUsageData: usageData }, () => {
-        sendResponse({ success: true });
-      });
     });
     return true;
   } else if (message.action === 'getData') {
