@@ -132,10 +132,10 @@ function calculateTotalStats(usageData) {
   Object.keys(usageData).forEach(site => {
     const siteData = usageData[site];
     if (siteData.length > 0) {
-      const sortedData = [...siteData].sort((a, b) => b.timestamp - a.timestamp);
-      const latestData = sortedData[0];
-      totalTime += latestData.totalTime;
-      totalWaitTime += latestData.totalWaitTime;
+      siteData.forEach(dayData => {
+        totalTime += Number(dayData.totalTime || 0);
+        totalWaitTime += Number(dayData.totalWaitTime || 0);
+      });
       siteCount++;
     }
   });
@@ -244,17 +244,5 @@ function formatDate(dateString) {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit'
-  });
-}
-
-function formatTime(timestamp) {
-  const date = new Date(timestamp);
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
   });
 }

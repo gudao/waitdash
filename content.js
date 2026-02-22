@@ -1,26 +1,38 @@
 class TimeTracker {
   constructor() {
-    this.startTime = null;
     this.waitStartTime = null;
-    this.totalTime = 0; // kept for backward-compat display, computed from totalActiveTime
+    this.totalTime = 0;
     this.totalWaitTime = 0;
     this.currentSite = this.detectSite();
+    this.siteKey = this.getSiteKey();
     this.initialized = false;
     this.isWaiting = false;
-    this.observer = null;
-    this.observers = []; // store all observers so we can disconnect
+    this.observers = [];
     this.isActive = true;
     this.lastActivityTime = Date.now();
     this.inactivityTimer = null;
     this.inactivityThreshold = 5 * 60 * 1000;
 
-    // new fields for correct segmented time accumulation
-    this.activeStart = null; // timestamp when current active segment started
-    this.totalActiveTime = 0; // accumulated active time in ms
+    this.activeStart = null;
+    this.totalActiveTime = 0;
 
-    // UI / listener handles
     this.buttonInterval = null;
     this.listenersAttached = false;
+    
+    this.settings = null;
+    this.trackingEnabled = true;
+  }
+
+  getSiteKey() {
+    const site = this.currentSite;
+    const keyMap = {
+      '豆包': 'doubao',
+      '元宝': 'yuanbao',
+      'ChatGPT': 'chatgpt',
+      'Claude': 'claude',
+      'Gemini': 'gemini'
+    };
+    return keyMap[site] || null;
   }
 
   detectSite() {
@@ -36,11 +48,16 @@ class TimeTracker {
 
   async startTracking() {
     if (!this.initialized && this.currentSite !== 'Unknown') {
+      await this.loadSettings();
+      
+      if (!this.trackingEnabled) {
+        console.log(`${this.currentSite} 追踪已禁用，跳过初始化`);
+        return;
+      }
+      
       this.initialized = true;
-      // load persisted data first
       await this.loadData();
 
-      // start a new active segment
       this.activeStart = Date.now();
       this.lastActivityTime = Date.now();
 
@@ -50,6 +67,38 @@ class TimeTracker {
       this.setupActivityListeners();
       this.startInactivityTimer();
       console.log(`${this.currentSite} 时间追踪已启动`);
+    }
+  }
+
+  async loadSettings() {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      try {
+        const result = await new Promise((resolve) => {
+          chrome.storage.local.get(['waitdashSettings'], resolve);
+        });
+        this.settings = result.waitdashSettings || {
+          sites: {
+            doubao: true,
+            yuanbao: true,
+            chatgpt: true,
+            claude: true,
+            gemini: true
+          },
+          general: {
+            trackingEnabled: true,
+            detailedLogs: false
+          }
+        };
+        
+        const globalEnabled = this.settings.general && this.settings.general.trackingEnabled !== false;
+        const siteEnabled = this.siteKey && this.settings.sites && this.settings.sites[this.siteKey] !== false;
+        this.trackingEnabled = globalEnabled && siteEnabled;
+        
+        console.log(`设置已加载: 全局=${globalEnabled}, 站点=${this.siteKey}=${siteEnabled}, 追踪=${this.trackingEnabled}`);
+      } catch (e) {
+        console.log('加载设置失败:', e);
+        this.trackingEnabled = true;
+      }
     }
   }
 
@@ -65,12 +114,22 @@ class TimeTracker {
       }
     });
 
-    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'click', 'touchstart'];
+    const activityEvents = ['mousedown', 'keydown', 'scroll', 'click', 'touchstart'];
     activityEvents.forEach(event => {
       document.addEventListener(event, () => {
         this.onUserActivity();
       }, { passive: true });
     });
+
+    let lastMoveTime = 0;
+    const moveThrottle = 5000;
+    document.addEventListener('mousemove', () => {
+      const now = Date.now();
+      if (now - lastMoveTime > moveThrottle) {
+        lastMoveTime = now;
+        this.onUserActivity();
+      }
+    }, { passive: true });
   }
 
   onPageActive() {
@@ -254,13 +313,15 @@ class TimeTracker {
   }
 
   setupInputListeners() {
-    // prevent duplicate listeners
     if (this._inputListenersInitialized) return;
     this._inputListenersInitialized = true;
 
     document.addEventListener('keydown', (e) => {
       if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Submit') {
-        this.startWaitTime();
+        const activeElement = document.activeElement;
+        if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable)) {
+          this.startWaitTime();
+        }
       }
     });
 
@@ -504,9 +565,7 @@ class TimeTracker {
   }
 
   setupMutationObserver() {
-    // main observer to detect generated responses across sites
-    if (this.observer) return;
-    this.observer = new MutationObserver((mutations) => {
+    const observer = new MutationObserver((mutations) => {
       let hasSignificantChange = false;
       mutations.forEach((mutation) => {
         if (mutation.addedNodes.length > 0) {
@@ -525,8 +584,8 @@ class TimeTracker {
       if (hasSignificantChange) this.endWaitTime();
     });
 
-    this.observer.observe(document.body, { childList: true, subtree: true });
-    this.observers.push(this.observer);
+    observer.observe(document.body, { childList: true, subtree: true });
+    this.observers.push(observer);
   }
 
   startWaitTime() {
@@ -551,25 +610,21 @@ class TimeTracker {
   }
 
   stopTracking() {
-    // accumulate any running active segment
     if (this.activeStart) {
       this.totalActiveTime += Date.now() - this.activeStart;
       this.activeStart = null;
     }
 
-    // sync totalTime for compatibility
     this.totalTime = this.totalActiveTime;
 
     this.endWaitTime();
     this.saveData();
 
-    // disconnect observers
     try {
       (this.observers || []).forEach(o => { try { o.disconnect(); } catch (e) {} });
       this.observers = [];
     } catch (e) {}
 
-    // clear ui interval
     if (this.buttonInterval) {
       clearInterval(this.buttonInterval);
       this.buttonInterval = null;
@@ -578,7 +633,6 @@ class TimeTracker {
     console.log(`${this.currentSite} 时间追踪已停止`);
   }
 
-  // helper to compute total active time including current segment
   computeTotalActive(now = Date.now()) {
     return this.totalActiveTime + (this.activeStart ? (now - this.activeStart) : 0);
   }

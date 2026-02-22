@@ -56,9 +56,9 @@ function setupEventListeners() {
 }
 
 function exportData() {
-  chrome.storage.local.get(['aiUsageData', 'waitdashSettings'], (result) => {
+  chrome.storage.local.get(['waitdash_stats', 'waitdashSettings'], (result) => {
     const exportData = {
-      aiUsageData: result.aiUsageData || {},
+      waitdash_stats: result.waitdash_stats || {},
       settings: result.waitdashSettings || {},
       exportDate: new Date().toISOString()
     };
@@ -78,7 +78,7 @@ function exportData() {
 
 function clearAllData() {
   if (confirm('确定要清空所有数据吗？此操作不可恢复。')) {
-    chrome.storage.local.set({ aiUsageData: {} }, () => {
+    chrome.storage.local.set({ waitdash_stats: {} }, () => {
       showStatusMessage('所有数据已清空', 'success');
     });
   }
