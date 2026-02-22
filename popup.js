@@ -63,48 +63,24 @@ function loadData() {
       currentTabUrl = tabs[0].url;
     }
 
-    // 兼容读取两种存储格式：老的 aiUsageData（site -> array）以及新的 waitdash_stats（site -> object）
-    chrome.storage.local.get(['aiUsageData', 'waitdash_stats'], (result) => {
-      const rawAi = result.aiUsageData || {};
-      const rawWait = result.waitdash_stats || {};
+    chrome.storage.local.get(['waitdash_stats'], (result) => {
+      const stats = result.waitdash_stats || {};
       const normalized = {};
 
-      // 从 waitdash_stats 归一化：site -> object 转为数组项
-      Object.keys(rawWait).forEach(site => {
-        const s = rawWait[site] || {};
-        normalized[site] = normalized[site] || [];
-        normalized[site].push({
-          totalTime: Number(s.totalActiveTime || 0),
-          totalWaitTime: Number(s.totalWaitTime || 0),
-          waitPercentage: Number(s.totalActiveTime) > 0 ? (Number(s.totalWaitTime || 0) / Number(s.totalActiveTime || 0)) * 100 : 0,
-          date: s.date || new Date().toISOString().split('T')[0],
-          timestamp: s.lastSaved || Date.now()
-        });
-      });
-
-      // 从 aiUsageData 归一化：支持 site -> array 或 site -> object
-      Object.keys(rawAi).forEach(site => {
-        const arr = rawAi[site];
-        normalized[site] = normalized[site] || [];
-        if (Array.isArray(arr)) {
-          arr.forEach(entry => {
-            normalized[site].push({
-              totalTime: Number(entry.totalTime || entry.totalActiveTime || 0),
-              totalWaitTime: Number(entry.totalWaitTime || 0),
-              waitPercentage: typeof entry.waitPercentage !== 'undefined' ? Number(entry.waitPercentage) : (Number(entry.totalTime || entry.totalActiveTime || 0) > 0 ? (Number(entry.totalWaitTime || 0) / Number(entry.totalTime || entry.totalActiveTime || 0)) * 100 : 0),
-              date: entry.date || new Date().toISOString().split('T')[0],
-              timestamp: entry.timestamp || Date.now()
-            });
-          });
-        } else if (arr && typeof arr === 'object') {
+      Object.keys(stats).forEach(site => {
+        const siteData = stats[site];
+        normalized[site] = [];
+        
+        Object.keys(siteData).forEach(date => {
+          const dayData = siteData[date];
           normalized[site].push({
-            totalTime: Number(arr.totalTime || arr.totalActiveTime || 0),
-            totalWaitTime: Number(arr.totalWaitTime || 0),
-            waitPercentage: typeof arr.waitPercentage !== 'undefined' ? Number(arr.waitPercentage) : (Number(arr.totalTime || arr.totalActiveTime || 0) > 0 ? (Number(arr.totalWaitTime || 0) / Number(arr.totalTime || arr.totalActiveTime || 0)) * 100 : 0),
-            date: arr.date || new Date().toISOString().split('T')[0],
-            timestamp: arr.timestamp || Date.now()
+            totalTime: Number(dayData.totalActiveTime || 0),
+            totalWaitTime: Number(dayData.totalWaitTime || 0),
+            waitPercentage: Number(dayData.totalActiveTime) > 0 ? (Number(dayData.totalWaitTime || 0) / Number(dayData.totalActiveTime || 0)) * 100 : 0,
+            date: dayData.date || date,
+            timestamp: dayData.lastSaved || Date.now()
           });
-        }
+        });
       });
 
       allData = normalized;
@@ -125,9 +101,9 @@ function displayData() {
   
   const currentSite = getCurrentSiteFromUrl(currentTabUrl);
   
-  // always show current site (if any) and total summary
   if (currentSite && allData[currentSite] && allData[currentSite].length > 0) {
-    const latestData = allData[currentSite][allData[currentSite].length - 1];
+    const sortedData = [...allData[currentSite]].sort((a, b) => b.timestamp - a.timestamp);
+    const latestData = sortedData[0];
     const siteCard = createSiteCard(currentSite, latestData, true);
     dataContainer.appendChild(siteCard);
   }
@@ -156,7 +132,8 @@ function calculateTotalStats(usageData) {
   Object.keys(usageData).forEach(site => {
     const siteData = usageData[site];
     if (siteData.length > 0) {
-      const latestData = siteData[siteData.length - 1];
+      const sortedData = [...siteData].sort((a, b) => b.timestamp - a.timestamp);
+      const latestData = sortedData[0];
       totalTime += latestData.totalTime;
       totalWaitTime += latestData.totalWaitTime;
       siteCount++;
@@ -248,7 +225,6 @@ function createSiteCard(site, data, isCurrent) {
 }
 
 function setupEventListeners() {
-  // clear button listener
   document.addEventListener('click', (e) => {
     const target = e.target;
     if (target && target.id === 'clear-btn') {

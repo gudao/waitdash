@@ -590,12 +590,15 @@ class TimeTracker {
         const all = data && data.waitdash_stats ? data.waitdash_stats : {};
         const siteData = all[this.currentSite];
         if (siteData) {
-          // load totals (assume stored in ms)
-          this.totalActiveTime = siteData.totalActiveTime || 0;
-          this.totalWaitTime = siteData.totalWaitTime || 0;
+          const today = new Date().toISOString().split('T')[0];
+          const todayData = siteData[today];
+          if (todayData) {
+            this.totalActiveTime = todayData.totalActiveTime || 0;
+            this.totalWaitTime = todayData.totalWaitTime || 0;
+          }
         }
       } catch (e) {
-        // ignore load errors
+        console.log('加载数据失败:', e);
       }
     }
   }
