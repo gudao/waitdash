@@ -1,0 +1,83 @@
+# 工作流名称
+name: 自动打包并发布Chrome扩展
+
+# 触发条件：创建Tag时触发（推荐用Tag管理版本，如v1.0.0）
+on:
+  create:
+    tags:
+     - 'v*'
+     
+# 工作流权限（创建Release需要的权限）
+permissions:
+  contents: write
+
+# 任务定义
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest  # 运行环境选择Ubuntu
+    steps:
+      # 步骤1：检出仓库代码
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # 步骤2：打包Chrome扩展为ZIP（Chrome可直接安装解压后的ZIP）
+      - name: 打包扩展文件
+        run: |
+          # 定义打包文件名（包含Tag版本号）
+          EXTENSION_NAME="chrome-extension-${{ github.ref_name }}.zip"
+          # 打包核心文件，排除.git、.github等无关文件
+          zip -r $EXTENSION_NAME . \
+            -x ".git/*" ".github/*" "node_modules/*" "*.md" "LICENSE"
+          # 输出文件路径，方便后续步骤使用
+          echo "EXTENSION_PATH=$(pwd)/$EXTENSION_NAME" >> $GITHUB_ENV
+
+      # 步骤3：创建GitHub Release
+      - name: 创建Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # GitHub自动生成的Token，无需手动配置
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: 扩展版本 ${{ github.ref_name }}
+          draft: false  # 非草稿，直接发布
+          prerelease: false  # 非预发布版本
+
+      # 步骤4：上传ZIP包到Release
+      - name: 上传扩展包到Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ env.EXTENSION_PATH }}
+          asset_name: ${{ env.EXTENSION_NAME }}
+          asset_content_type: application/zip
+
+      # 【可选】打包CRX格式（需要私钥，进阶用法）
+      - name: 打包CRX格式（可选）
+        if: secrets.CRX_PRIVATE_KEY != ''  # 仅当配置了私钥时执行
+        run: |
+          # 安装CRX打包工具
+          sudo apt-get update && sudo apt-get install -y chromium-browser
+          # 定义CRX文件名
+          CRX_NAME="chrome-extension-${{ github.ref_name }}.crx"
+          # 从GitHub Secrets读取私钥并保存到文件
+          echo "${{ secrets.CRX_PRIVATE_KEY }}" > private.pem
+          # 打包CRX（需chromium-browser支持）
+          chromium-browser --pack-extension=. --pack-extension-key=private.pem
+          # 重命名CRX文件（默认是扩展文件夹名.crx）
+          mv your-extension.crx $CRX_NAME
+          echo "CRX_PATH=$(pwd)/$CRX_NAME" >> $GITHUB_ENV
+
+      # 【可选】上传CRX到Release
+      - name: 上传CRX包到Release
+        if: secrets.CRX_PRIVATE_KEY != ''
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ env.CRX_PATH }}
+          asset_name: ${{ env.CRX_NAME }}
+          asset_content_type: application/x-chrome-extension
